@@ -34,7 +34,7 @@ declare const global: any;
 declare const process: any;
 
 const Tolerance = 3;
-const WhiteThreshold = 240;
+const WhiteThreshold = 232;
 
 // All valid street names, street suffixes, suburb names and hundred names.
 
@@ -133,10 +133,12 @@ function rotateImage(bounds: Rectangle, degrees: number) {
 // Constructs a rectangle based on the union of the two specified rectangles.
 
 function union(rectangle1: Rectangle, rectangle2: Rectangle): Rectangle {
-    if (rectangle1 === undefined)
-        return rectangle2;
+    if (rectangle1 === undefined && rectangle2 === undefined)
+        return undefined;
+    else if (rectangle1 === undefined)
+        return { ...rectangle2 };
     else if (rectangle2 === undefined)
-        return rectangle1;
+        return { ...rectangle1 };
 
     let x = Math.min(rectangle1.x, rectangle2.x);
     let y = Math.min(rectangle1.y, rectangle1.y);
@@ -603,9 +605,9 @@ async function parsePdf(url: string) {
         let viewport = await page.getViewport(1.0);
         let operators = await page.getOperatorList();
 
-        // Indicate whether the page is rotate.
+        // Indicate whether the page is rotated.
 
-        if (page.rotate !== 0)
+        if (page.rotate !== 0 && page.rotate !== 90)
             console.log(`Page ${pageIndex + 1} is rotated ${page.rotate}°.`);
 
         // Find and parse any images in the current PDF page.
@@ -651,7 +653,7 @@ async function parsePdf(url: string) {
 
         // Parse the text from the images.
 
-        let degrees = 90;  // assume 90 degree rotation
+        let degrees = (page.rotate === 90) ? 90 : 0;
         let pageElements: Element[] = [];
         for (let imageInfo of imageInfos) {
             pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
@@ -659,12 +661,12 @@ async function parsePdf(url: string) {
                 global.gc();
         }
 
-        // Try without rotating the page (and try using any text content).
+        // Try with a different page rotation (and try using any text content).
 
         let applicationCount = findAllTextBounds(pageElements, "Valuation").length;
         if (findAllTextBounds(pageElements, "Valuation").length === 0) {
-            degrees = 0;  // no rotation
-            console.log(`    No development applications were found so retrying with the page not rotated by 90 degrees.`)
+            degrees = (page.rotate === 90) ? 0 : 90;
+            console.log(`    No development applications were found so retrying with the page rotated by ${degrees}°.`)
             pageElements = [];
             for (let imageInfo of imageInfos) {
                 pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
@@ -673,7 +675,7 @@ async function parsePdf(url: string) {
             }
             applicationCount = findAllTextBounds(pageElements, "Valuation").length;
             if (applicationCount === 0) {
-                console.log(`    No development applications were found when the page was not rotated by 90 degrees so retrying with text content.`);
+                console.log(`    No development applications were found when the page was rotated by ${degrees}° so retrying with text content of the page.`);
                 pageElements = await parseElements(page);
                 applicationCount = findAllTextBounds(pageElements, "Valuation").length;
                 if (applicationCount === 0)
@@ -681,7 +683,7 @@ async function parsePdf(url: string) {
                 else
                     console.log(`    Found ${applicationCount} ${(applicationCount === 1) ? "development application" : "development applications"} in the text content of the page.`);
             } else {
-                console.log(`    Found ${applicationCount} ${(applicationCount === 1) ? "development application" : "development applications"} when the page was not rotated by 90 degrees.`);
+                console.log(`    Found ${applicationCount} ${(applicationCount === 1) ? "development application" : "development applications"} when the page was not rotated by ${degrees}°.`);
             }
         }
 
@@ -725,8 +727,12 @@ async function parsePdf(url: string) {
 
         let lowestElement = elements.reduce((previous, current) => ((previous === undefined || current.y + current.height > previous.y + previous.height) ? current : previous), undefined);
         let lowestY = (lowestElement === undefined) ? 0 : (lowestElement.y + lowestElement.height + Tolerance);
+
+        let pageHighestElement = pageElements.reduce((previous, current) => ((previous === undefined || current.y < previous.y) ? current : previous), undefined);
+        let pageHighestY = (pageHighestElement === undefined) ? 0 : pageHighestElement.y;
+
         for (let pageElement of pageElements)
-            elements.push({ text: pageElement.text, confidence: pageElement.confidence, x: pageElement.x, y: pageElement.y + lowestY, width: pageElement.width, height: pageElement.height });
+            elements.push({ text: pageElement.text, confidence: pageElement.confidence, x: pageElement.x, y: pageElement.y - pageHighestY + lowestY, width: pageElement.width, height: pageElement.height });
 
         permitNumberHeadingBounds = union(permitNumberHeadingBounds, pagePermitNumberHeadingBounds);
         applicantsDetailsHeadingBounds = union(applicantsDetailsHeadingBounds, pageApplicantsDetailsHeadingBounds);
@@ -801,7 +807,7 @@ function parseApplicationElements(url: string, elements: Element[], permitNumber
             continue;
         }
     
-        applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "").replace(/O/g, "0").replace(/[“”]([4-9])$/g, "/1$1");  // for example, converts "17I2017" to "17/2017"
+        applicationNumber = applicationNumber.replace(/[IlL!\[\]\|\(\)\{\}]/g, "1").replace(/[°Oo]/g, "0").replace(/[‘']/g, "").replace(/[“”]([4-9])$/g, "/1$1");
         console.log(`    Found \"${applicationNumber}\".`);
     
         // Get the address.
@@ -827,8 +833,7 @@ function parseApplicationElements(url: string, elements: Element[], permitNumber
         }
 
         let addressText = addressElements.map(element => element.text).join("").replace(/\s/g, "");
-        if (addressText === undefined || addressText === "")
-        {
+        if (addressText === undefined || addressText === "") {
             let elementSummary = applicationElements.map(element => `[${element.text}]`).join("");
             console.log(`Application number ${applicationNumber} will be ignored because there is no address.  Elements: ${elementSummary}`);
             continue;
@@ -898,10 +903,7 @@ async function main() {
     
     let pdfUrls: string[] = [
         "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202016.pdf",
-        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015.pdf",
-        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-1.pdf",
-        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf",
-        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Register%20Approvals%20for%202014.pdf"
+        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf"
     ];
 
     for (let element of $("div.unityHtmlArticle p a").get()) {
@@ -910,6 +912,8 @@ async function main() {
             if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
                 pdfUrls.push(pdfUrl.href);
     }
+    
+pdfUrls = [ "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf" ];
 
     if (pdfUrls.length === 0) {
         console.log("No PDF URLs were found on the page.");
