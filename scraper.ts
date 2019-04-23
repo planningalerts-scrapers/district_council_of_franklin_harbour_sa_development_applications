@@ -911,10 +911,7 @@ async function main() {
     
     // Include URLs for "well known" PDFs.
 
-    let pdfUrls: string[] = [
-        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202016.pdf",
-        "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf"
-    ];
+    let pdfUrls: string[] = [ "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf" ];
 
     // Add the URL of the most recent PDF.
 
