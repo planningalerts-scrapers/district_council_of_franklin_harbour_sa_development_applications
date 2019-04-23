@@ -404,9 +404,12 @@ function findAllTextBounds(elements: Element[], text: string) {
                 break;
             if (currentText.length >= condensedText.length - 3) {  // ignore until the text is close to long enough
                 if (currentText === condensedText || didYouMean(currentText, [ condensedText ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true }) !== null) {
+                    // Construct an encompassing rectangle.
+
                     let rectangle = undefined;
                     for (let rightElement of rightElements)
                         rectangle = union(rectangle, rightElement);
+
                     matches.push({ x: rectangle.x, y: rectangle.y, width: rectangle.width, height: rectangle.height });
                 }
             }
@@ -481,7 +484,7 @@ function findTextBounds(elements: Element[], text: string) {
     return undefined;
 }
 
-// Converts image data from the PDF to a jimp format image.
+// Converts image data from the PDF to a jimp format image (with the specified rotation).
 
 function convertToJimpImage(image: any, degrees: number) {
     let pixelSize = (8 * image.data.length) / (image.width * image.height);
@@ -520,7 +523,7 @@ function convertToJimpImage(image: any, degrees: number) {
     return jimpImage;
 }
 
-// Parses text from an image.
+// Parses text from an image (using the specified language).
 
 async function parseImage(image: any, bounds: Rectangle, language: string) {
     // Segment the image based on blocks of white.
@@ -531,7 +534,7 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
 
     let elements: Element[] = [];
     for (let segment of segments) {
-        let scaleFactor = 1.0;
+        let scaleFactor = 1.0;  // currently always 1.0
 
         let imageBuffer = await new Promise((resolve, reject) => segment.image.getBuffer(jimp.MIME_PNG, (error, buffer) => error ? reject(error) : resolve(buffer)));
         segment.image = undefined;  // attempt to release memory
@@ -661,7 +664,7 @@ async function parsePdf(url: string) {
                 global.gc();
         }
 
-        // Try with a different page rotation (and try using any text content).
+        // Try with a different page rotation (and try to use any text content).
 
         let applicationCount = findAllTextBounds(pageElements, "Valuation").length;
         if (findAllTextBounds(pageElements, "Valuation").length === 0) {
@@ -673,8 +676,11 @@ async function parsePdf(url: string) {
                 if (global.gc)
                     global.gc();
             }
+
             applicationCount = findAllTextBounds(pageElements, "Valuation").length;
             if (applicationCount === 0) {
+                // Get the text content.
+
                 console.log(`    No development applications were found when the page was rotated by ${degrees}° so retrying with text content of the page.`);
                 pageElements = await parseElements(page);
                 applicationCount = findAllTextBounds(pageElements, "Valuation").length;
@@ -727,12 +733,13 @@ async function parsePdf(url: string) {
 
         let lowestElement = elements.reduce((previous, current) => ((previous === undefined || current.y + current.height > previous.y + previous.height) ? current : previous), undefined);
         let lowestY = (lowestElement === undefined) ? 0 : (lowestElement.y + lowestElement.height + Tolerance);
-
         let pageHighestElement = pageElements.reduce((previous, current) => ((previous === undefined || current.y < previous.y) ? current : previous), undefined);
         let pageHighestY = (pageHighestElement === undefined) ? 0 : pageHighestElement.y;
 
         for (let pageElement of pageElements)
             elements.push({ text: pageElement.text, confidence: pageElement.confidence, x: pageElement.x, y: pageElement.y - pageHighestY + lowestY, width: pageElement.width, height: pageElement.height });
+
+        // Construct a union of the bounds of heading elements across all pages (ie. an "average").
 
         permitNumberHeadingBounds = union(permitNumberHeadingBounds, pagePermitNumberHeadingBounds);
         applicantsDetailsHeadingBounds = union(applicantsDetailsHeadingBounds, pageApplicantsDetailsHeadingBounds);
@@ -771,7 +778,7 @@ async function parseElements(page: any) {
     return elements;
 }
 
-// Parses development applications from the elements.
+// Parses development application details from the specified elements (for one application).
 
 function parseApplicationElements(url: string, elements: Element[], permitNumberHeadingBounds: Rectangle, applicantsDetailsHeadingBounds: Rectangle, siteOfBuildingHeadingBounds: Rectangle, descriptionOfWorkHeadingBounds: Rectangle) {
     let developmentApplications = [];
@@ -781,7 +788,8 @@ function parseApplicationElements(url: string, elements: Element[], permitNumber
     let elementComparer = (a, b) => (Math.abs(a.y - b.y) < 2 * Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
     elements.sort(elementComparer);
 
-    // Search for "Valuation" as this always appears on the second line of an application.
+    // Search for "Valuation" as this always appears on the second line of an application (and so
+    // is a good marker to use when identifying where the details of an application are located).
 
     let headings = findAllTextBounds(elements, "Valuation");
 
@@ -807,7 +815,7 @@ function parseApplicationElements(url: string, elements: Element[], permitNumber
             continue;
         }
     
-        applicationNumber = applicationNumber.replace(/[IlL!\[\]\|\(\)\{\}]/g, "1").replace(/[°Oo]/g, "0").replace(/[‘']/g, "").replace(/[“”]([4-9])$/g, "/1$1");
+        applicationNumber = applicationNumber.replace(/[IlL!\[\]\|\(\)\{\}]/g, "1").replace(/[°Oo]/g, "0").replace(/[‘’']/g, "").replace(/[“”]([4-9])$/g, "/1$1");
         console.log(`    Found \"${applicationNumber}\".`);
     
         // Get the address.
@@ -863,7 +871,7 @@ function parseApplicationElements(url: string, elements: Element[], permitNumber
             informationUrl: url,
             commentUrl: CommentUrl,
             scrapeDate: moment().format("YYYY-MM-DD"),
-            receivedDate: ""
+            receivedDate: ""  // not current available in the PDFs
         });
     }
 
@@ -901,10 +909,14 @@ async function main() {
     await sleep(2000 + getRandom(0, 5) * 1000);
     let $ = cheerio.load(body);
     
+    // Include URLs for "well known" PDFs.
+
     let pdfUrls: string[] = [
         "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202016.pdf",
         "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf"
     ];
+
+    // Add the URL of the most recent PDF.
 
     for (let element of $("div.unityHtmlArticle p a").get()) {
         let pdfUrl = new urlparser.URL(element.attribs.href, DevelopmentApplicationsUrl);
@@ -912,8 +924,6 @@ async function main() {
             if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
                 pdfUrls.push(pdfUrl.href);
     }
-    
-pdfUrls = [ "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf" ];
 
     if (pdfUrls.length === 0) {
         console.log("No PDF URLs were found on the page.");
