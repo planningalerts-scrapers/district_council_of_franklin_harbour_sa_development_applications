@@ -34,6 +34,7 @@ declare const global: any;
 declare const process: any;
 
 const Tolerance = 3;
+const ColorThreshold = 224;
 
 // All valid street names, street suffixes, suburb names and hundred names.
 
@@ -52,7 +53,7 @@ async function initializeDatabase() {
     return new Promise((resolve, reject) => {
         let database = new sqlite3.Database("data.sqlite");
         database.serialize(() => {
-            database.run("create table if not exists [data] ([council_reference] text primary key, [address] text, [description] text, [info_url] text, [comment_url] text, [date_scraped] text, [date_received] text, [legal_description] text)");
+            database.run("create table if not exists [data] ([council_reference] text primary key, [address] text, [description] text, [info_url] text, [comment_url] text, [date_scraped] text, [date_received] text)");
             resolve(database);
         });
     });
@@ -70,17 +71,16 @@ async function insertRow(database, developmentApplication) {
             developmentApplication.informationUrl,
             developmentApplication.commentUrl,
             developmentApplication.scrapeDate,
-            developmentApplication.receivedDate,
-            developmentApplication.legalDescription
+            developmentApplication.receivedDate
         ], function(error, row) {
             if (error) {
                 console.error(error);
                 reject(error);
             } else {
                 if (this.changes > 0)
-                    console.log(`    Inserted: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\", legal description \"${developmentApplication.legalDescription}\" and received date \"${developmentApplication.receivedDate}\" into the database.`);
+                    console.log(`    Inserted: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" into the database.`);
                 else
-                    console.log(`    Skipped: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\", legal description \"${developmentApplication.legalDescription}\" and received date \"${developmentApplication.receivedDate}\" because it was already present in the database.`);
+                    console.log(`    Skipped: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" because it was already present in the database.`);
                 sqlStatement.finalize();  // releases any locks
                 resolve(row);
             }
@@ -177,6 +177,11 @@ function getRowTop(elements: Element[], startElement: Element) {
 // Constructs a rectangle based on the union of the two specified rectangles.
 
 function union(rectangle1: Rectangle, rectangle2: Rectangle): Rectangle {
+    if (rectangle1 === undefined)
+        return rectangle2;
+    else if (rectangle2 === undefined)
+        return rectangle1;
+
     let x = Math.min(rectangle1.x, rectangle2.x);
     let y = Math.min(rectangle1.y, rectangle1.y);
     let width = Math.max(Math.max(rectangle1.x + rectangle1.width, rectangle2.x + rectangle2.width) - x, 0);
@@ -660,7 +665,7 @@ function segmentImageVertically(jimpImage: any, bounds: Rectangle) {
                 whiteCount++;
             else {
                 let color = (jimp as any).intToRGBA(value);
-                if (color.r > 240 && color.g > 240 && color.b > 240)  // white or just off-white
+                if (color.r > ColorThreshold && color.g > ColorThreshold && color.b > ColorThreshold)  // white or just off-white
                     whiteCount++;
             }
         }
@@ -679,9 +684,9 @@ function segmentImageVertically(jimpImage: any, bounds: Rectangle) {
         isPreviousWhiteLine = isWhiteLine;
     }
 
-    // Only keep blocks of white that consist of 25 consecutive lines or more (an arbitrary value).
+    // Only keep blocks of white that consist of 20 consecutive lines or more (an arbitrary value).
 
-    whiteBlocks = whiteBlocks.filter(whiteBlock => whiteBlock.height >= 25);
+    whiteBlocks = whiteBlocks.filter(whiteBlock => whiteBlock.height >= 20);
 
     // Determine the rectangles that remain when the blocks of white are removed.
 
@@ -713,7 +718,7 @@ function segmentImageHorizontally(jimpImage: any, bounds: Rectangle) {
                 whiteCount++;
             else {
                 let color = (jimp as any).intToRGBA(value);
-                if (color.r > 240 && color.g > 240 && color.b > 240)  // white or just off-white
+                if (color.r > ColorThreshold && color.g > ColorThreshold && color.b > ColorThreshold)  // white or just off-white
                     whiteCount++;
             }
         }
@@ -732,9 +737,9 @@ function segmentImageHorizontally(jimpImage: any, bounds: Rectangle) {
         isPreviousWhiteLine = isWhiteLine;
     }
 
-    // Only keep blocks of white that consist of 25 consecutive lines or more (an arbitrary value).
+    // Only keep blocks of white that consist of 20 consecutive lines or more (an arbitrary value).
 
-    whiteBlocks = whiteBlocks.filter(whiteBlock => whiteBlock.width >= 25);
+    whiteBlocks = whiteBlocks.filter(whiteBlock => whiteBlock.width >= 20);
 
     // Determine the bounds of the rectangles that remain when the blocks of white are removed.
 
@@ -747,6 +752,44 @@ function segmentImageHorizontally(jimpImage: any, bounds: Rectangle) {
     }
 
     return rectangles;
+}
+
+// Finds all elements that closely match the specified text and returns rectangles that encompass
+// each set of matching elements.
+
+function findAllTextBounds(elements: Element[], text: string) {
+    let condensedText = text.replace(/[^A-Za-z0-9\s]/g, "").toLowerCase();
+
+    // Examine all elements on the page.
+
+    let matches: Rectangle[] = [];
+    for (let element of elements) {
+        // Extract up to 5 elements to the right of the element.  Join together the elements to
+        // the right in an attempt to find a match to the text.
+
+        let rightElement = element;
+        let rightElements: Element[] = [];
+
+        do {
+            rightElements.push(rightElement);
+            let currentText = rightElements.map(element => element.text).join("").replace(/[^A-Za-z0-9\s]/g, "").toLowerCase();
+
+            if (currentText.length > condensedText.length + 3)  // stop once the text is too long
+                break;
+            if (currentText.length >= condensedText.length - 3) {  // ignore until the text is close to long enough
+                if (currentText === condensedText || didYouMean(currentText, [ condensedText ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 2, trimSpaces: true }) !== null) {
+                    let rectangle = undefined;
+                    for (let rightElement of rightElements)
+                        rectangle = union(rectangle, rightElement);
+                    matches.push({ x: rectangle.x, y: rectangle.y, width: rectangle.width, height: rectangle.height });
+                }
+            }
+
+            rightElement = getRightElement(elements, rightElement);
+        } while (rightElement !== undefined && rightElements.length < 5);  // up to 5 elements
+    }
+
+    return matches;
 }
 
 // Finds the elements that most closely match the specified text and returns a rectangle that
@@ -790,7 +833,7 @@ function findTextBounds(elements: Element[], text: string) {
         } while (rightElement !== undefined && rightElements.length < 5);  // up to 5 elements
     }
 
-    // Chose the best match (if any matches were found).  Note that trimming is performed here so
+    // Choose the best match (if any matches were found).  Note that trimming is performed here so
     // that text such as "  Plan" is matched in preference to text such as "plan)" (when looking
     // for elements that match "Plan").  For an example of this problem see "200/303/07" in
     // "https://www.walkerville.sa.gov.au/webdata/resources/files/DA%20Register%20-%202007.pdf".
@@ -814,15 +857,16 @@ function findTextBounds(elements: Element[], text: string) {
 
 // Finds the start element of each development application on the current PDF page (there are
 // typically two development applications on a single page and each development application
-// typically begins with the text "Application No").
+// typically has above it the text "Permit No" or "Owners Name").
 
 function findStartElements(elements: Element[]) {
-    const FindText = "ApplicationNo";
+    const FindText1 = "PermitNo";
+    const FindText2 = "OwnersName"
     
     // Examine all the elements on the page that begin with the same letter as the FindText.
 
     let startElements: Element[] = [];
-    for (let element of elements.filter(element => element.text.replace(/[^A-Za-z0-9\s]/g, "").toLowerCase().startsWith(FindText.charAt(0).toLowerCase()))) {
+    for (let element of elements.filter(element => element.text.replace(/[^A-Za-z0-9\s]/g, "").toLowerCase().startsWith(FindText1.charAt(0).toLowerCase()) || element.text.replace(/[^A-Za-z0-9\s]/g, "").toLowerCase().startsWith(FindText2.charAt(0).toLowerCase()))) {
         // Extract up to 5 elements to the right of the element that has text starting with the
         // first letter of the FindText (and so may be the start of the FindText).  Join together
         // the elements to the right in an attempt to find the best match to the FindText.
@@ -837,25 +881,27 @@ function findStartElements(elements: Element[]) {
             // Allow for common miscellaneous characters such as " ", "." and "-".
 
             let text = rightElements.map(element => element.text).join("").replace(/[^A-Za-z0-9\s]/g, "").toLowerCase();
-            if (text.length > FindText.length + 2)  // stop once the text is too long
+            if (text.length > FindText1.length + 2 && text.length > FindText2.length + 2 )  // stop once the text is too long
                 break;
-            if (text.length >= FindText.length - 2) {  // ignore until the text is close to long enough
-                if (text === FindText.toLowerCase())
+            if (text.length >= FindText1.length - 2 || text.length >= FindText2.length - 2) {  // ignore until the text is close to long enough
+                if (text === FindText1.toLowerCase() || text === FindText2.toLowerCase())
                     matches.push({ element: rightElement, threshold: 0, text: text });
-                else if (didYouMean(text, [ FindText ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 1, trimSpaces: true }) !== null)
+                else if (didYouMean(text, [ FindText1 ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 1, trimSpaces: true }) !== null)
+                    matches.push({ element: rightElement, threshold: 1, text: text });
+                    else if (didYouMean(text, [ FindText2 ], { caseSensitive: false, returnType: didyoumean.ReturnTypeEnums.FIRST_CLOSEST_MATCH, thresholdType: didyoumean.ThresholdTypeEnums.EDIT_DISTANCE, threshold: 1, trimSpaces: true }) !== null)
                     matches.push({ element: rightElement, threshold: 1, text: text });
             }
 
             rightElement = getRightElement(elements, rightElement);
         } while (rightElement !== undefined && rightElements.length < 5);  // up to 5 elements
 
-        // Chose the best match (if any matches were found).
+        // Choose the best match (if any matches were found).
 
         if (matches.length > 0) {
             let bestMatch = matches.reduce((previous, current) =>
                 (previous === undefined ||
                 current.threshold < previous.threshold ||
-                (current.threshold === previous.threshold && Math.abs(current.text.trim().length - FindText.length) < Math.abs(previous.text.trim().length - FindText.length)) ? current : previous), undefined);
+                (current.threshold === previous.threshold && (Math.abs(current.text.trim().length - FindText1.length) < Math.abs(previous.text.trim().length - FindText1.length) || Math.abs(current.text.trim().length - FindText2.length) < Math.abs(previous.text.trim().length - FindText2.length))) ? current : previous), undefined);
             startElements.push(bestMatch.element);
         }
     }
@@ -896,7 +942,7 @@ function convertToJimpImage(image: any, degrees: number) {
                 let r = image.data[index];
                 let g = image.data[index + 1];
                 let b = image.data[index + 2];
-                if (r < 254 || g < 254 || b < 254)  // only ignore white and practically white
+                if (r < ColorThreshold || g < ColorThreshold || b < ColorThreshold)  // only ignore white and practically white
                     jimpImage.setPixelColor(jimp.rgbaToInt(r, g, b, 255), x, y);
             }
         }
@@ -964,7 +1010,7 @@ function composeImage(imageInfos: ImageInfo[], compositeImageBounds: Rectangle, 
 
                     // Treat white (or off white) as transparent.
 
-                    if (r < 248 || g < 248 || b < 248) {  // ignore white and just off-white
+                    if (r < ColorThreshold || g < ColorThreshold || b < ColorThreshold) {  // ignore white and just off-white
                         let color = jimp.rgbaToInt(r, g, b, 255);
                         let compositeImageX = intersectingBounds.x - compositeImageBounds.x + x;
                         let compositeImageY = intersectingBounds.y - compositeImageBounds.y + y;
@@ -990,14 +1036,7 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
 
     let elements: Element[] = [];
     for (let segment of segments) {
-        // Attempt to avoid using too much memory by scaling down large images.
-
         let scaleFactor = 1.0;
-        if (segment.bounds.width * segment.bounds.height > 1000 * 1000) {
-            scaleFactor = 0.5;
-            console.log(`    Scaling a large image segment (${segment.bounds.width}×${segment.bounds.height}) by ${scaleFactor} to reduce memory usage.`);
-            segment.image = segment.image.scale(scaleFactor, jimp.RESIZE_BEZIER);
-        }
 
         let imageBuffer = await new Promise((resolve, reject) => segment.image.getBuffer(jimp.MIME_PNG, (error, buffer) => error ? reject(error) : resolve(buffer)));
         segment.image = undefined;  // attempt to release memory
@@ -1343,6 +1382,13 @@ async function parsePdf(url: string) {
     // memory usage by the PDF (because just calling page._destroy() on each iteration of the loop
     // appears not to be enough to release all memory used by the PDF parsing).
 
+    let elements: Element[] = [];
+
+    let permitNumberHeadingBounds: Rectangle = undefined;
+    let applicantsDetailsHeadingBounds: Rectangle = undefined;
+    let siteOfBuildingHeadingBounds: Rectangle = undefined;
+    let descriptionOfWorkHeadingBounds: Rectangle = undefined;
+
     for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
         let pdf = await pdfjs.getDocument({ data: buffer, disableFontFace: true, ignoreErrors: true });
         if (pageIndex >= pdf.numPages)
@@ -1396,43 +1442,35 @@ async function parsePdf(url: string) {
                 height: image.height
             };
 
-            // The first image is typically at a different scale (2.083333 instead of 4.166666).
-            // Ignore such an image (it is usually a low quality JPEG with just boundary lines and
-            // the odd letter or two).
-
-            let scale = image.height / transform[3];
-            if (scale < 2.5 && imageInfos.length === 0 && image.height > 1000 && image.width > 1000)
-                continue;  // ignore the image
-
             imageInfos.push({ image: image, bounds: bounds });
         }
 
         // Parse the text from the images.
 
-        let degrees = 0;  // assume no page rotation
-        let elements: Element[] = [];
+        let degrees = 90;  // assume 90 degree rotation
+        let pageElements: Element[] = [];
         for (let imageInfo of imageInfos) {
-            elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
+            pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
             if (global.gc)
                 global.gc();
         }
 
-        // Try rotating the page by 90 degrees.
+        // Try without rotating the page.
 
-        if (findStartElements(elements).length === 0) {
-            degrees = 90;  // 90 degree rotation
-            console.log(`    No development applications were found so retrying with the page rotated by ${degrees} degrees.`)
-            elements = [];
+        if (findStartElements(pageElements).length === 0) {
+            degrees = 0;  // no rotation
+            console.log(`    No development applications were found so retrying with the page not rotated by 90 degrees.`)
+            pageElements = [];
             for (let imageInfo of imageInfos) {
-                elements = elements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
+                pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
                 if (global.gc)
                     global.gc();
             }
-            let applicationCount = findStartElements(elements).length;
+            let applicationCount = findStartElements(pageElements).length;
             if (applicationCount === 0)
-                console.log(`    No development applications were found when the page was rotated by ${degrees} degrees.`);
+                console.log(`    No development applications were found when the page was not rotated by 90 degrees.`);
             else                    
-                console.log(`    Found ${applicationCount} ${(applicationCount === 1) ? "development application" : "development applications"} when the page was rotated by ${degrees} degrees.`);
+                console.log(`    Found ${applicationCount} ${(applicationCount === 1) ? "development application" : "development applications"} when the page was not rotated by 90 degrees.`);
         }
 
         // Release the memory used by the PDF now that it is no longer required (it will be
@@ -1446,60 +1484,208 @@ async function parsePdf(url: string) {
         // very unlikely to actually be text).  In some rare cases they may be valid (such as
         // a full stop far from other text).
 
-        elements = elements.filter(element => element.height > 2);
+        pageElements = pageElements.filter(element => element.height > 2);
 
-        // Sort the cells by approximate Y co-ordinate and then by X co-ordinate.
+        // Sort the elements by approximate Y co-ordinate and then by X co-ordinate.
 
-        let elementComparer = (a, b) => (Math.abs(a.y - b.y) < 3 * Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
-        elements.sort(elementComparer);
+        let elementComparer = (a, b) => (Math.abs(a.y - b.y) < 2 * Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
+        pageElements.sort(elementComparer);
+        
+        // Find the "Permit No.", "Applicants Details, "Site of Building" and "Description of Work"
+        // headings on each page.
 
-        // Group the elements into sections based on where the "Application No" text starts (and
-        // any other element the "Application No" elements line up with horizontally with a margin
-        // of error equal to about the height of the "Application No" text; this is done in order
-        // to capture the lodged date, which may be higher up than the "Application No" text).
+        let pagePermitNumberHeadingBounds = findTextBounds(pageElements, "PermitNo");
+        let pageApplicantsDetailsHeadingBounds = findTextBounds(pageElements, "ApplicantsDetails");
+        let pageSiteOfBuildingHeadingBounds = findTextBounds(pageElements, "SiteofBuilding");
+        let pageDescriptionOfWorkHeadingBounds = findTextBounds(pageElements, "DescriptionofWork");
 
-        let applicationElementGroups = [];
-        let startElements = findStartElements(elements);
-        for (let index = 0; index < startElements.length; index++) {
-            // Determine the highest Y co-ordinate of this row and the next row (or the bottom of
-            // the current page).  Allow some leeway vertically (add some extra height) because
-            // in some cases the lodged date is a fair bit higher up than the "Application No"
-            // text (see the similar leeway used in getReceivedDate).
-            
-            let startElement = startElements[index];
-            let raisedStartElement: Element = {
-                text: startElement.text,
-                confidence: startElement.confidence,
-                x: startElement.x,
-                y: startElement.y - 3 * startElement.height,  // leeway
-                width: startElement.width,
-                height: startElement.height };
-            let rowTop = getRowTop(elements, raisedStartElement);
-            let nextRowTop = (index + 1 < startElements.length) ? getRowTop(elements, startElements[index + 1]) : Number.MAX_VALUE;
+        let topBounds = undefined;
+        topBounds = (pagePermitNumberHeadingBounds === undefined) ? topBounds : pagePermitNumberHeadingBounds;
+        topBounds = (pageApplicantsDetailsHeadingBounds === undefined) ? topBounds : pageApplicantsDetailsHeadingBounds;
+        topBounds = (pageSiteOfBuildingHeadingBounds === undefined) ? topBounds : pageSiteOfBuildingHeadingBounds;
+        topBounds = (pageDescriptionOfWorkHeadingBounds === undefined) ? topBounds : pageDescriptionOfWorkHeadingBounds;
 
-            // Extract all elements between the two rows.
-
-            applicationElementGroups.push({ elements: elements.filter(element => element.y >= rowTop && element.y + element.height < nextRowTop) });
+        if (topBounds === undefined) {
+            let elementSummary = pageElements.map(element => `[${element.text}]`).join("");
+            console.log(`Ignoring the page because none of the heading elements (such as "Permit No." and "Site of Building") were found.  Elements: ${elementSummary}`);
+            continue;
         }
 
-        // Parse the development application from each group of elements (ie. a section of the
-        // current page of the PDF document).  If the same application number is encountered a
-        // second time in the same document then this likely indicates the parsing of the images
-        // has incorrectly recognised some of the digits in the application number.  In this case
-        // add a suffix to the application number so it is unique (and so will be inserted into
-        // the database later instead of being ignored).
+        // Remove the heading elements.
 
-        for (let applicationElementGroup of applicationElementGroups) {
-            let developmentApplication = await parseApplicationElements(applicationElementGroup.elements, url, imageInfos, degrees);
-            if (developmentApplication !== undefined) {
-                let suffix = 0;
-                let applicationNumber = developmentApplication.applicationNumber;
-                while (developmentApplications.some(otherDevelopmentApplication => otherDevelopmentApplication.applicationNumber === developmentApplication.applicationNumber))
-                    developmentApplication.applicationNumber = `${applicationNumber} (${++suffix})`;  // add a unique suffix
-                developmentApplications.push(developmentApplication);
-            }
-        }
+        pageElements = pageElements.filter(element => element.y > topBounds.y + topBounds.height);
+
+        // Add to the overall array of all elements.
+
+        let lowestElement = elements.reduce((previous, current) => ((previous === undefined || current.y + current.height > previous.y + previous.height) ? current : previous), undefined);
+        let lowestY = (lowestElement === undefined) ? 0 : (lowestElement.y + lowestElement.height + Tolerance);
+        for (let pageElement of pageElements)
+            elements.push({ text: pageElement.text, confidence: pageElement.confidence, x: pageElement.x, y: pageElement.y + lowestY, width: pageElement.width, height: pageElement.height });
+
+        permitNumberHeadingBounds = union(permitNumberHeadingBounds, pagePermitNumberHeadingBounds);
+        applicantsDetailsHeadingBounds = union(applicantsDetailsHeadingBounds, pageApplicantsDetailsHeadingBounds);
+        siteOfBuildingHeadingBounds = union(siteOfBuildingHeadingBounds, pageSiteOfBuildingHeadingBounds);
+        descriptionOfWorkHeadingBounds = union(descriptionOfWorkHeadingBounds, pageDescriptionOfWorkHeadingBounds);
     }
+
+fs.writeFileSync(`C:\\Temp\\Franklin\\permitNumberHeadingBounds.txt`, JSON.stringify(permitNumberHeadingBounds));
+fs.writeFileSync(`C:\\Temp\\Franklin\\applicantsDetailsHeadingBounds.txt`, JSON.stringify(applicantsDetailsHeadingBounds));
+fs.writeFileSync(`C:\\Temp\\Franklin\\siteOfBuildingHeadingBounds.txt`, JSON.stringify(siteOfBuildingHeadingBounds));
+fs.writeFileSync(`C:\\Temp\\Franklin\\descriptionOfWorkHeadingBounds.txt`, JSON.stringify(descriptionOfWorkHeadingBounds));
+fs.writeFileSync(`C:\\Temp\\Franklin\\AllElements.txt`, JSON.stringify(elements));
+// permitNumberHeadingBounds = JSON.parse(fs.readFileSync(`C:\\Temp\\Franklin\\permitNumberHeadingBounds.txt`).toString());
+// applicantsDetailsHeadingBounds = JSON.parse(fs.readFileSync(`C:\\Temp\\Franklin\\applicantsDetailsHeadingBounds.txt`).toString());
+// siteOfBuildingHeadingBounds = JSON.parse(fs.readFileSync(`C:\\Temp\\Franklin\\siteOfBuildingHeadingBounds.txt`).toString());
+// descriptionOfWorkHeadingBounds = JSON.parse(fs.readFileSync(`C:\\Temp\\Franklin\\descriptionOfWorkHeadingBounds.txt`).toString());
+// elements = JSON.parse(fs.readFileSync(`C:\\Temp\\Franklin\\AllElements.txt`).toString());
+
+    // Sort the elements by approximate Y co-ordinate and then by X co-ordinate.
+
+    let elementComparer = (a, b) => (Math.abs(a.y - b.y) < 2 * Tolerance) ? ((a.x > b.x) ? 1 : ((a.x < b.x) ? -1 : 0)) : ((a.y > b.y) ? 1 : -1);
+    elements.sort(elementComparer);
+
+    // Search for "Valuation" as this always appears on the second line of an application.
+
+    let headings = findAllTextBounds(elements, "Valuation");
+
+    for (let index = 0; index < headings.length; index++) {
+        let currentHeadingY = headings[index].y - 2 * headings[index].height - Tolerance;
+        let nextHeadingY = (index + 1 < headings.length) ? (headings[index + 1].y - 2 * headings[index + 1].height - Tolerance) : Number.MAX_VALUE;
+
+        // Group the elements by development application.
+
+        let applicationElements = elements.filter(element => element.y >= currentHeadingY && element.y < nextHeadingY);
+
+        let applicationNumberBounds = {
+            x: permitNumberHeadingBounds.x,
+            y: currentHeadingY,
+            width: applicantsDetailsHeadingBounds.x - permitNumberHeadingBounds.x,
+            height: 2 * permitNumberHeadingBounds.height
+        }
+
+        let applicationNumber = applicationElements.filter(element => getPercentageOfElementInRectangle(element, applicationNumberBounds) > 75).map(element => element.text).join("").replace(/\s/g, "");
+        if (applicationNumber === undefined || applicationNumber === "") {
+            let elementSummary = applicationElements.map(element => `[${element.text}]`).join("");
+            console.log(`Could not find the application number.  The development application will be ignored.  Elements: ${elementSummary}`);
+            continue;
+        }
+    
+        applicationNumber = applicationNumber.replace(/[IlL\[\]\|’,!\(\)\{\}]/g, "/").replace(/°/g, "0").replace(/'\//g, "1").replace(/\/\//g, "1/").replace(/201\?/g, "2017").replace(/‘/g, "").replace(/'/g, "").replace(/O/g, "0").replace(/[“”]([4-9])$/g, "/1$1");  // for example, converts "17I2017" to "17/2017"
+        console.log(`    Found \"${applicationNumber}\".`);
+    
+        // Get the address.
+
+        let addressBounds = {
+            x: siteOfBuildingHeadingBounds.x,
+            y: currentHeadingY,
+            width: descriptionOfWorkHeadingBounds.x - siteOfBuildingHeadingBounds.x,
+            height: 3 * siteOfBuildingHeadingBounds.height
+        }
+
+        let addressElements = applicationElements.filter(element => getPercentageOfElementInRectangle(element, addressBounds) > 75);
+
+        // Group the address elements into rows.
+
+        let addressRows: Element[][] = [];
+        for (let addressElement of addressElements) {
+            let addressRow = addressRows.find(row => Math.abs(row[0].y - addressElement.y) < 2 * Tolerance);  // approximate Y co-ordinate match
+            if (addressRow === undefined)
+                addressRows.push([ addressElement ]);  // start a new row
+            else
+                addressRow.push(addressElement);  // add to an existing row
+        }
+
+        let addressText = addressElements.map(element => element.text).join("").replace(/\s/g, "");
+        if (addressText === undefined || addressText === "")
+        {
+            let elementSummary = applicationElements.map(element => `[${element.text}]`).join("");
+            console.log(`Application number ${applicationNumber} will be ignored because there is no address.  Elements: ${elementSummary}`);
+            continue;
+        }
+    
+        let addressLines = addressRows.map(addressRow => addressRow.map(element => element.text).join(" ").trim().replace(/\s\s+/g, " "));
+        let address = addressLines.filter(line => line !== "").join(", ");  // ignore blank lines
+        address = address.replace(/[‘’]/g, "'").replace(/[—*]/g, "-");
+        console.log(`Address: ${address}`);
+
+        // Get the description.
+        
+        let descriptionBounds = {
+            x: descriptionOfWorkHeadingBounds.x,
+            y: currentHeadingY,
+            width: Number.MAX_VALUE,
+            height: headings[index].y - currentHeadingY
+        }
+
+        let description = applicationElements.filter(element => getPercentageOfElementInRectangle(element, descriptionBounds) > 75).map(element => element.text).join(" ");
+        console.log(`Description: ${description}`);
+
+        developmentApplications.push({
+            applicationNumber: applicationNumber,
+            address: address,
+            description: ((description === "") ? "No description provided" : description),
+            informationUrl: url,
+            commentUrl: CommentUrl,
+            scrapeDate: moment().format("YYYY-MM-DD"),
+            receivedDate: ""
+        });
+    }
+
+    // Merge all of the elements from all of the pages together (without the headings).
+
+    // let combinedElements = [];
+    // for (let elements of pages) {
+    //     combinedElements = combinedElements.concat(elements.filter(element => ))
+    // }
+
+
+        // // Group the elements into sections based on where the "Application No" text starts (and
+        // // any other element the "Application No" elements line up with horizontally with a margin
+        // // of error equal to about the height of the "Application No" text; this is done in order
+        // // to capture the lodged date, which may be higher up than the "Application No" text).
+
+        // let applicationElementGroups = [];
+        // let startElements = findStartElements(elements);
+        // for (let index = 0; index < startElements.length; index++) {
+        //     // Determine the highest Y co-ordinate of this row and the next row (or the bottom of
+        //     // the current page).  Allow some leeway vertically (add some extra height) because
+        //     // in some cases the lodged date is a fair bit higher up than the "Application No"
+        //     // text (see the similar leeway used in getReceivedDate).
+            
+        //     let startElement = startElements[index];
+        //     let raisedStartElement: Element = {
+        //         text: startElement.text,
+        //         confidence: startElement.confidence,
+        //         x: startElement.x,
+        //         y: startElement.y - 3 * startElement.height,  // leeway
+        //         width: startElement.width,
+        //         height: startElement.height };
+        //     let rowTop = getRowTop(elements, raisedStartElement);
+        //     let nextRowTop = (index + 1 < startElements.length) ? getRowTop(elements, startElements[index + 1]) : Number.MAX_VALUE;
+
+        //     // Extract all elements between the two rows.
+
+        //     applicationElementGroups.push({ elements: elements.filter(element => element.y >= rowTop && element.y + element.height < nextRowTop) });
+        // }
+
+        // // Parse the development application from each group of elements (ie. a section of the
+        // // current page of the PDF document).  If the same application number is encountered a
+        // // second time in the same document then this likely indicates the parsing of the images
+        // // has incorrectly recognised some of the digits in the application number.  In this case
+        // // add a suffix to the application number so it is unique (and so will be inserted into
+        // // the database later instead of being ignored).
+
+        // for (let applicationElementGroup of applicationElementGroups) {
+        //     let developmentApplication = await parseApplicationElements(applicationElementGroup.elements, url, imageInfos, degrees);
+        //     if (developmentApplication !== undefined) {
+        //         let suffix = 0;
+        //         let applicationNumber = developmentApplication.applicationNumber;
+        //         while (developmentApplications.some(otherDevelopmentApplication => otherDevelopmentApplication.applicationNumber === developmentApplication.applicationNumber))
+        //             developmentApplication.applicationNumber = `${applicationNumber} (${++suffix})`;  // add a unique suffix
+        //         developmentApplications.push(developmentApplication);
+        //     }
+        // }
+    // }
 
     return developmentApplications;
 }
