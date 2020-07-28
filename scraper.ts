@@ -572,10 +572,6 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
                         }));
     }
 
-    console.log("Found the following elements:");
-    for (let element of elements)
-        console.log(`    [${element.x}, ${element.y} | ${element.confidence}] ${element.text}`);
-
     return elements;
 }
 
@@ -666,8 +662,7 @@ async function parsePdf(url: string) {
 
         console.log(`Parsing text from ${imageInfos.length} image(s).`);
 
-        // let degrees = (page.rotate === 90) ? 90 : 0;
-let degrees = 270;
+        let degrees = page.rotate;
         let pageElements: Element[] = [];
         for (let imageInfo of imageInfos) {
             pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
@@ -679,8 +674,7 @@ let degrees = 270;
 
         let applicationCount = findAllTextBounds(pageElements, "Valuation").length;
         if (findAllTextBounds(pageElements, "Valuation").length === 0) {
-            // degrees = (page.rotate === 90) ? 0 : 90;
-degrees = 180;
+            degrees = (page.rotate === 0) ? 90 : 0;
             console.log(`    No development applications were found so retrying with the page rotated by ${degrees}°.`)
             pageElements = [];
             for (let imageInfo of imageInfos) {
