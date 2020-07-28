@@ -572,6 +572,10 @@ async function parseImage(image: any, bounds: Rectangle, language: string) {
                         }));
     }
 
+    console.log("Found the following elements:");
+    for (let element of elements)
+        console.log(`    [${element.x}, ${element.y} | ${element.confidence}] ${element.text}`);
+
     return elements;
 }
 
@@ -660,7 +664,7 @@ async function parsePdf(url: string) {
 
         // Parse the text from the images.
 
-        console.log(`Parsing text from the ${imageInfos.length} image(s).`);
+        console.log(`Parsing text from ${imageInfos.length} image(s).`);
 
         let degrees = (page.rotate === 90) ? 90 : 0;
         let pageElements: Element[] = [];
