@@ -27,7 +27,7 @@ import didYouMean, * as didyoumean from "didyoumean2";
 
 sqlite3.verbose();
 
-const DevelopmentApplicationsUrl = "https://www.franklinharbour.sa.gov.au/page.aspx?u=302";
+const DevelopmentApplicationsUrl = "https://www.franklinharbour.sa.gov.au/services/development";
 const CommentUrl = "mailto:council@franklinharbour.sa.gov.au";
 
 declare const global: any;
@@ -59,7 +59,7 @@ async function initializeDatabase() {
 
 async function insertRow(database, developmentApplication) {
     return new Promise((resolve, reject) => {
-        let sqlStatement = database.prepare("insert or ignore into [data] values (?, ?, ?, ?, ?, ?, ?)");
+        let sqlStatement = database.prepare("insert or replace into [data] values (?, ?, ?, ?, ?, ?, ?)");
         sqlStatement.run([
             developmentApplication.applicationNumber,
             developmentApplication.address,
@@ -73,10 +73,7 @@ async function insertRow(database, developmentApplication) {
                 console.error(error);
                 reject(error);
             } else {
-                if (this.changes > 0)
-                    console.log(`    Inserted: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" into the database.`);
-                else
-                    console.log(`    Skipped: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" because it was already present in the database.`);
+                console.log(`    Saved application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" to the database.`);
                 sqlStatement.finalize();  // releases any locks
                 resolve(row);
             }
@@ -909,15 +906,12 @@ async function main() {
     await sleep(2000 + getRandom(0, 5) * 1000);
     let $ = cheerio.load(body);
     
-    // Include URLs for "well known" PDFs.
-
-    let pdfUrls: string[] = [ "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf" ];
-
     // Add the URL of the most recent PDF.
 
+    let pdfUrls: string[] = [];
     for (let element of $("div.unityHtmlArticle p a").get()) {
         let pdfUrl = new urlparser.URL(element.attribs.href, DevelopmentApplicationsUrl);
-        if (pdfUrl.href.toLowerCase().includes("development%20report") && pdfUrl.href.toLowerCase().includes(".pdf"))
+        if (pdfUrl.href.toLowerCase().includes("development") && (pdfUrl.href.toLowerCase().includes("approval") || pdfUrl.href.toLowerCase().includes("register")) && pdfUrl.href.toLowerCase().includes(".pdf"))
             if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
                 pdfUrls.push(pdfUrl.href);
     }
