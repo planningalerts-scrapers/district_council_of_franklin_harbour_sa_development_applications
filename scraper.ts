@@ -666,7 +666,8 @@ async function parsePdf(url: string) {
 
         console.log(`Parsing text from ${imageInfos.length} image(s).`);
 
-        let degrees = (page.rotate === 90) ? 90 : 0;
+        // let degrees = (page.rotate === 90) ? 90 : 0;
+let degrees = 270;
         let pageElements: Element[] = [];
         for (let imageInfo of imageInfos) {
             pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
@@ -678,7 +679,8 @@ async function parsePdf(url: string) {
 
         let applicationCount = findAllTextBounds(pageElements, "Valuation").length;
         if (findAllTextBounds(pageElements, "Valuation").length === 0) {
-            degrees = (page.rotate === 90) ? 0 : 90;
+            // degrees = (page.rotate === 90) ? 0 : 90;
+degrees = 180;
             console.log(`    No development applications were found so retrying with the page rotated by ${degrees}°.`)
             pageElements = [];
             for (let imageInfo of imageInfos) {
