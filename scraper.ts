@@ -596,8 +596,7 @@ async function parsePdf(url: string) {
     let descriptionOfWorkHeadingBounds: Rectangle = undefined;
 
     console.log("Testing with just one page.");
-    // for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
-    for (let pageIndex = 0; pageIndex < 1; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
+    for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
         let pdf = await pdfjs.getDocument({ data: buffer, disableFontFace: true, ignoreErrors: true });
         if (pageIndex >= pdf.numPages)
             break;
