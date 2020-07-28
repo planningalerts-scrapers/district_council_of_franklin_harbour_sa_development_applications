@@ -27,7 +27,7 @@ import didYouMean, * as didyoumean from "didyoumean2";
 
 sqlite3.verbose();
 
-const DevelopmentApplicationsUrl = "https://www.franklinharbour.sa.gov.au/page.aspx?u=302";
+const DevelopmentApplicationsUrl = "https://www.franklinharbour.sa.gov.au/services/development";
 const CommentUrl = "mailto:council@franklinharbour.sa.gov.au";
 
 declare const global: any;
@@ -73,7 +73,7 @@ async function insertRow(database, developmentApplication) {
                 console.error(error);
                 reject(error);
             } else {
-                console.log(`    Saved: application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" into the database.`);
+                console.log(`    Saved application \"${developmentApplication.applicationNumber}\" with address \"${developmentApplication.address}\", description \"${developmentApplication.description}\" and received date \"${developmentApplication.receivedDate}\" to the database.`);
                 sqlStatement.finalize();  // releases any locks
                 resolve(row);
             }
@@ -595,6 +595,7 @@ async function parsePdf(url: string) {
     let siteOfBuildingHeadingBounds: Rectangle = undefined;
     let descriptionOfWorkHeadingBounds: Rectangle = undefined;
 
+    console.log("Testing with just one page.");
     for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
         let pdf = await pdfjs.getDocument({ data: buffer, disableFontFace: true, ignoreErrors: true });
         if (pageIndex >= pdf.numPages)
@@ -624,6 +625,8 @@ async function parsePdf(url: string) {
             if (typeof image === "string")
                 image = page.objs.get(image);  // get the actual image using its name
 
+            console.log("    Found an image.");
+
             // Obtain the transform that applies to the image.  Note that the first image in the
             // PDF typically has a pdfjs.OPS.dependency element in the fnArray between it and its
             // transform (pdfjs.OPS.transform).
@@ -633,8 +636,11 @@ async function parsePdf(url: string) {
                 transform = operators.argsArray[index - 1];
             else if (index - 2 >= 0 && operators.fnArray[index - 1] === pdfjs.OPS.dependency && operators.fnArray[index - 2] === pdfjs.OPS.transform)
                 transform = operators.argsArray[index - 2];
-            else
+            else {
+                console.log("    Could not obtain the transform for the image.");
                 continue;
+            }
+            console.log("    Obtained the transform for the image.");
 
             // Use the transform to translate the X and Y co-ordinates, but assume that the width
             // and height are consistent between all images and do not need to be scaled.  This
@@ -653,7 +659,9 @@ async function parsePdf(url: string) {
 
         // Parse the text from the images.
 
-        let degrees = (page.rotate === 90) ? 90 : 0;
+        console.log(`Parsing text from ${imageInfos.length} image(s).`);
+
+        let degrees = page.rotate;
         let pageElements: Element[] = [];
         for (let imageInfo of imageInfos) {
             pageElements = pageElements.concat(await parseImage(convertToJimpImage(imageInfo.image, degrees), rotateImage(imageInfo.bounds, degrees), "eng"));
@@ -665,7 +673,7 @@ async function parsePdf(url: string) {
 
         let applicationCount = findAllTextBounds(pageElements, "Valuation").length;
         if (findAllTextBounds(pageElements, "Valuation").length === 0) {
-            degrees = (page.rotate === 90) ? 0 : 90;
+            degrees = (page.rotate === 0) ? 90 : 0;
             console.log(`    No development applications were found so retrying with the page rotated by ${degrees}°.`)
             pageElements = [];
             for (let imageInfo of imageInfos) {
@@ -906,15 +914,12 @@ async function main() {
     await sleep(2000 + getRandom(0, 5) * 1000);
     let $ = cheerio.load(body);
     
-    // Include URLs for "well known" PDFs.
-
-    let pdfUrls: string[] = [ "http://www.franklinharbour.sa.gov.au/webdata/resources/files/Development%20Report%20for%202015-2.pdf" ];
-
     // Add the URL of the most recent PDF.
 
+    let pdfUrls: string[] = [];
     for (let element of $("div.unityHtmlArticle p a").get()) {
         let pdfUrl = new urlparser.URL(element.attribs.href, DevelopmentApplicationsUrl);
-        if (pdfUrl.href.toLowerCase().includes("development%20report") && pdfUrl.href.toLowerCase().includes(".pdf"))
+        if (pdfUrl.href.toLowerCase().includes("development") && (pdfUrl.href.toLowerCase().includes("approval") || pdfUrl.href.toLowerCase().includes("register")) && pdfUrl.href.toLowerCase().includes(".pdf"))
             if (!pdfUrls.some(url => url === pdfUrl.href))  // avoid duplicates
                 pdfUrls.push(pdfUrl.href);
     }
