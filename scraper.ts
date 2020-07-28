@@ -595,7 +595,9 @@ async function parsePdf(url: string) {
     let siteOfBuildingHeadingBounds: Rectangle = undefined;
     let descriptionOfWorkHeadingBounds: Rectangle = undefined;
 
-    for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
+    console.log("Testing with just one page.");
+    // for (let pageIndex = 0; pageIndex < 500; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
+    for (let pageIndex = 0; pageIndex < 1; pageIndex++) {  // limit to an arbitrarily large number of pages (to avoid any chance of an infinite loop)
         let pdf = await pdfjs.getDocument({ data: buffer, disableFontFace: true, ignoreErrors: true });
         if (pageIndex >= pdf.numPages)
             break;
@@ -624,6 +626,8 @@ async function parsePdf(url: string) {
             if (typeof image === "string")
                 image = page.objs.get(image);  // get the actual image using its name
 
+            console.log("    Found an image.");
+
             // Obtain the transform that applies to the image.  Note that the first image in the
             // PDF typically has a pdfjs.OPS.dependency element in the fnArray between it and its
             // transform (pdfjs.OPS.transform).
@@ -633,8 +637,11 @@ async function parsePdf(url: string) {
                 transform = operators.argsArray[index - 1];
             else if (index - 2 >= 0 && operators.fnArray[index - 1] === pdfjs.OPS.dependency && operators.fnArray[index - 2] === pdfjs.OPS.transform)
                 transform = operators.argsArray[index - 2];
-            else
+            else {
+                console.log("    Could not obtain the transform for the image.");
                 continue;
+            }
+            console.log("    Obtained the transform for the image.");
 
             // Use the transform to translate the X and Y co-ordinates, but assume that the width
             // and height are consistent between all images and do not need to be scaled.  This
@@ -652,6 +659,8 @@ async function parsePdf(url: string) {
         }
 
         // Parse the text from the images.
+
+        console.log(`Parsing text from the ${imageInfos.length} image(s).`);
 
         let degrees = (page.rotate === 90) ? 90 : 0;
         let pageElements: Element[] = [];
